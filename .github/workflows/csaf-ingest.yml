@@ -1,0 +1,176 @@
+# .github/workflows/csaf-ingest.yml
+#
+# Replaces the SSH "black box": coordinator JSON -> validate -> sign -> hash
+# -> place in csaf_files/<FEED>/white/<year>/ -> update index.txt,
+# changes.csv and the ROLIE feed -> pull request (or direct push) to develop.
+#
+# Ways an advisory gets in (all take the same path):
+#   1. repository_dispatch from the coordination platform:
+#        POST /repos/<owner>/<repo>/dispatches
+#        {"event_type":"csaf-advisory","client_payload":{"url":"https://...","feed":"OT"}}
+#   2. workflow_dispatch: someone pastes the URL in the Actions tab
+#   3. push: commit the raw JSON to incoming/<FEED>/  (incoming/OT/foo.json)
+#      or to incoming/ (feed auto-detected: ICSA-/ICSMA- -> OT)
+
+name: Ingest CSAF advisory
+
+on:
+  repository_dispatch:
+    types: [csaf-advisory]
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "URL of the CSAF JSON on the coordination platform (blank = process incoming/)"
+        required: false
+      feed:
+        description: "Feed for a URL import"
+        type: choice
+        options: [auto, OT, IT, VA]
+        default: auto
+  push:
+    branches: [develop]
+    paths: ["incoming/**.json"]
+
+concurrency:
+  group: csaf-ingest          # one at a time so index/changes/ROLIE never race
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write              # only used to kick off the Pages workflow
+
+env:
+  BASE_BRANCH: develop
+  PUBLISH_MODE: ${{ vars.CSAF_PUBLISH_MODE || 'pr' }}   # "pr" or "push"
+  GOCSAF_VERSION: 3.6.0                                  # validator, pinned
+  SECVISOGRAM_VERSION: 3.0.2                             # mandatory tests, pinned
+  WRITE_FEEDS: ${{ vars.CSAF_WRITE_FEEDS || 'true' }}    # set "false" after the Pages cutover
+
+jobs:
+  ingest:
+    runs-on: ubuntu-24.04
+    environment: csaf-publishing   # holds the signing key; add reviewers here for a manual gate
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BASE_BRANCH }}
+
+      # ---- 1. Get the file -------------------------------------------------
+      - name: Fetch advisory from coordinator
+        if: github.event_name != 'push' && (github.event.client_payload.url || inputs.url)
+        env:
+          SRC_URL: ${{ github.event.client_payload.url || inputs.url }}
+          FEED: ${{ github.event.client_payload.feed || inputs.feed || 'auto' }}
+          COORDINATOR_HOST: ${{ vars.COORDINATOR_HOST }}
+          COORDINATOR_TOKEN: ${{ secrets.COORDINATOR_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$SRC_URL" == https://* ]] || { echo "::error::URL must be https"; exit 1; }
+          host=$(printf '%s' "$SRC_URL" | sed -E 's#^https://([^/:]+).*#\1#')
+          [ -n "$COORDINATOR_HOST" ] && [ "$host" = "$COORDINATOR_HOST" ] \
+            || { echo "::error::Host '$host' is not COORDINATOR_HOST ('$COORDINATOR_HOST')"; exit 1; }
+          FEED=$(printf '%s' "$FEED" | tr '[:lower:]' '[:upper:]')
+          case "$FEED" in IT|OT|VA) dir="incoming/$FEED";; AUTO) dir=incoming;; *) echo "::error::bad feed $FEED"; exit 1;; esac
+          mkdir -p "$dir"
+          auth=(); [ -n "${COORDINATOR_TOKEN:-}" ] && auth=(-H "Authorization: Bearer $COORDINATOR_TOKEN")
+          curl -fsSL --proto '=https' --max-filesize 52428800 "${auth[@]}" -o "$dir/fetched-${GITHUB_RUN_ID}.json" "$SRC_URL"
+          jq -e . "$dir/fetched-${GITHUB_RUN_ID}.json" >/dev/null || { echo "::error::Not valid JSON"; exit 1; }
+
+      - name: Collect incoming files
+        id: files
+        run: |
+          shopt -s nullglob
+          files=(incoming/*.json incoming/IT/*.json incoming/OT/*.json incoming/VA/*.json)
+          printf '%s\n' "${files[@]}"
+          echo "count=${#files[@]}" >> "$GITHUB_OUTPUT"
+          [ ${#files[@]} -gt 0 ] || echo "::notice::Nothing in incoming/"
+
+      # ---- 2. Validate (schema + mandatory tests, same as csaf-action) ----
+      - uses: actions/setup-node@v4
+        if: steps.files.outputs.count != '0'
+        with:
+          node-version: 22
+
+      - name: Install csaf_validator and Secvisogram validator service
+        if: steps.files.outputs.count != '0'
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/csaf.tgz "https://github.com/gocsaf/csaf/releases/download/v${GOCSAF_VERSION}/csaf-${GOCSAF_VERSION}-gnulinux-amd64.tar.gz"
+          tar -xzf /tmp/csaf.tgz -C /tmp
+          echo "CSAF_BIN=/tmp/csaf-${GOCSAF_VERSION}-gnulinux-amd64/bin-linux-amd64" >> "$GITHUB_ENV"
+          git clone -q --depth 1 -b "v${SECVISOGRAM_VERSION}" https://github.com/secvisogram/csaf-validator-service /tmp/secvisogram
+          cd /tmp/secvisogram && npm ci --silent
+          nohup npm run dev > /tmp/secvisogram.log 2>&1 &
+          for i in $(seq 1 60); do curl -fs -o /dev/null http://localhost:8082/docs && exit 0; sleep 2; done
+          cat /tmp/secvisogram.log; echo "::error::validator service did not start"; exit 1
+
+      - name: Validate
+        if: steps.files.outputs.count != '0'
+        run: |
+          # csaf_validator exit codes: 0 ok, 2 schema errors, 4 no remote validator, 8 mandatory tests failed
+          set -uo pipefail
+          rc=0
+          shopt -s nullglob
+          for f in incoming/*.json incoming/IT/*.json incoming/OT/*.json incoming/VA/*.json; do
+            echo "::group::Validating $f"
+            "$CSAF_BIN/csaf_validator" --validator http://localhost:8082 --validator_preset mandatory -o important "$f" \
+              || { echo "::error file=$f::$f failed validation (exit $?)"; rc=1; }
+            echo "::endgroup::"
+          done
+          exit $rc
+
+      # ---- 3. Sign, hash, place, index ------------------------------------
+      - name: Import OpenPGP signing key
+        if: steps.files.outputs.count != '0'
+        id: gpg
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.CSAF_GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.CSAF_GPG_PASSPHRASE }}
+
+      - name: Sign and place advisories
+        if: steps.files.outputs.count != '0'
+        env:
+          GPG_KEY_ID: ${{ steps.gpg.outputs.fingerprint }}
+          # Public URL of csaf_files/ used in ROLIE feed links; follows whatever repo this runs in.
+          RAW_BASE: https://raw.githubusercontent.com/${{ github.repository }}/${{ env.BASE_BRANCH }}/csaf_files
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for f in incoming/*.json;    do bash scripts/publish_csaf.sh auto "$f"; done
+          for feed in IT OT VA; do
+            for f in incoming/$feed/*.json; do bash scripts/publish_csaf.sh "$feed" "$f"; done
+          done
+
+      # ---- 4. Commit -------------------------------------------------------
+      - name: Commit and open PR / push
+        if: steps.files.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          shopt -s nullglob
+          done_files=(incoming/*.json incoming/*/*.json)
+          git rm -q --cached --ignore-unmatch "${done_files[@]}" >/dev/null
+          rm -f "${done_files[@]}"
+          git add -A csaf_files
+          if git diff --cached --quiet; then echo "No changes."; exit 0; fi
+          ids=$(git diff --cached --name-only --diff-filter=AM -- csaf_files | grep -E '/[0-9]{4}/[^/]+\.json$' \
+                | xargs -n1 basename | sed 's/\.json$//' | tr '[:lower:]' '[:upper:]' | paste -sd' ' -)
+          msg="Publish CSAF: ${ids}"
+          if [ "$PUBLISH_MODE" = "push" ]; then
+            git commit -q -m "$msg" -m "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            git push origin "HEAD:${BASE_BRANCH}"
+            # Pushes made with GITHUB_TOKEN don't trigger other workflows; start Pages explicitly.
+            if [ "${{ vars.CSAF_PAGES_ENABLED }}" = "true" ]; then gh workflow run csaf-pages.yml --ref "$BASE_BRANCH"; fi
+          else
+            branch="csaf/$(date -u +%Y%m%d)-${GITHUB_RUN_ID}"
+            git switch -q -c "$branch"
+            git commit -q -m "$msg" -m "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            git push -q origin "$branch"
+            gh pr create --base "$BASE_BRANCH" --head "$branch" --title "$msg" \
+              --body "Validated (schema + mandatory tests), signed and indexed by [workflow run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})."
+          fi
