@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment: csaf-publishing   # holds the signing key; add reviewers here for a manual gate
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ env.BASE_BRANCH }}
 
@@ -87,7 +87,7 @@ jobs:
           [ ${#files[@]} -gt 0 ] || echo "::notice::Nothing in incoming/"
 
       # ---- 2. Validate (schema + mandatory tests, same as csaf-action) ----
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         if: steps.files.outputs.count != '0'
         with:
           node-version: 22
@@ -124,7 +124,7 @@ jobs:
       - name: Import OpenPGP signing key
         if: steps.files.outputs.count != '0'
         id: gpg
-        uses: crazy-max/ghaction-import-gpg@v6
+        uses: crazy-max/ghaction-import-gpg@v7
         with:
           gpg_private_key: ${{ secrets.CSAF_GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.CSAF_GPG_PASSPHRASE }}
