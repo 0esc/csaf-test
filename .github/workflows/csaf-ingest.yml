@@ -109,6 +109,7 @@ jobs:
           for i in $(seq 1 60); do curl -fs -o /dev/null http://localhost:8082/docs && exit 0; sleep 2; done
           cat /tmp/secvisogram.log; echo "::error::validator service did not start"; exit 1
 
+# uhhhh check that this is how goCSAF works...
       - name: Validate
         if: steps.files.outputs.count != '0'
         run: |
