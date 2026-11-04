@@ -57,6 +57,13 @@ for src in "$@"; do
   fi
   case "$feed" in IT|OT|VA) ;; *) die "unknown feed '$feed' (expected IT, OT or VA)";; esac
 
+  # VA ids (published in either the IT or the VA feed): VA-<digits>[-<digits>...],
+  # e.g. VA-26-302-01 -> <feed>/white/<year>/va-26-302-01.json (file name is lowercased below)
+  if [[ "$(printf '%s' "$id" | tr '[:lower:]' '[:upper:]')" == VA-* ]]; then
+    [[ "$(printf '%s' "$id" | tr '[:lower:]' '[:upper:]')" =~ ^VA-[0-9]+(-[0-9]+)*$ ]] \
+      || die "$src: VA id '$id' must be 'VA-' followed by numbers separated by '-' (e.g. VA-26-302-01)"
+  fi
+
   allowed=false
   for t in $ALLOWED_TLP; do [ "$tlp" = "$t" ] && allowed=true; done
   $allowed || die "$src: TLP '$tlp' is not in ALLOWED_TLP ($ALLOWED_TLP); refusing to publish"
