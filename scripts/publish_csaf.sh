@@ -4,7 +4,7 @@
 # This is what the old "black box" did after validation.
 #
 # Usage:   scripts/publish_csaf.sh <FEED> advisory.json [more.json ...]
-#          FEED = IT | OT | VA | auto   (auto: ICSA-/ICSMA- ids -> OT)
+#          FEED = IT | OT | auto   (auto: ICSA-/ICSMA- ids -> OT)
 #
 # Environment:
 #   CSAF_ROOT    repo folder holding the feeds  (default: csaf_files)
@@ -30,7 +30,7 @@ WRITE_FEEDS="${WRITE_FEEDS:-true}"
 
 die() { echo "::error::$*" >&2; exit 1; }
 
-[ "$#" -ge 2 ] || die "usage: $0 <IT|OT|VA|auto> file.json [file.json ...]"
+[ "$#" -ge 2 ] || die "usage: $0 <IT|OT|auto> file.json [file.json ...]"
 FEED_ARG=$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]'); shift
 for t in jq gpg python3 sha512sum; do command -v "$t" >/dev/null || die "$t is required"; done
 
@@ -47,15 +47,15 @@ for src in "$@"; do
   current=$(jq -er '.document.tracking.current_release_date' "$src") || die "$src: missing current_release_date"
   status=$(jq -r '.document.tracking.status // ""' "$src")
 
-  # Which feed (IT/OT/VA)?
+  # Which feed (IT/OT)?
   feed="$FEED_ARG"
   if [ "$feed" = "AUTO" ]; then
     case "$id" in
       ICSA-*|ICSMA-*) feed=OT ;;
-      *) die "$src: can't tell the feed from id '$id'; pass IT, OT or VA explicitly" ;;
+      *) die "$src: can't tell the feed from id '$id'; pass IT or OT explicitly" ;;
     esac
   fi
-  case "$feed" in IT|OT|VA) ;; *) die "unknown feed '$feed' (expected IT, OT or VA)";; esac
+  case "$feed" in IT|OT) ;; *) die "unknown feed '$feed' (expected IT or OT)";; esac
 
   allowed=false
   for t in $ALLOWED_TLP; do [ "$tlp" = "$t" ] && allowed=true; done
@@ -151,8 +151,8 @@ PY
   { grep -vxF "$rel" "$tlp_dir/index.txt" || true; echo "$rel"; } | sort -r > "$tlp_dir/index.txt.tmp"
   mv "$tlp_dir/index.txt.tmp" "$tlp_dir/index.txt"
 
-  # changes.csv: <path>,<current_release_date>, newest first. The OT/VA files
-  # quote both fields and the IT file doesn't, so follow whatever is there.
+  # changes.csv: <path>,<current_release_date>, newest first. The OT file
+  # quotes both fields and the IT file doesn't, so follow whatever is there.
   touch "$tlp_dir/changes.csv"
   q='"'; [ -s "$tlp_dir/changes.csv" ] && [ "$(head -c1 "$tlp_dir/changes.csv")" != '"' ] && q=''
   { grep -vE "^\"?${rel//./\\.}\"?," "$tlp_dir/changes.csv" || true; printf '%s%s%s,%s%s%s\n' "$q" "$rel" "$q" "$q" "$current" "$q"; } \

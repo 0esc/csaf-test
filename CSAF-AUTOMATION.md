@@ -20,7 +20,7 @@
      https://api.github.com/repos/0esc/csaf-test/dispatches \
      -d '{"event_type":"csaf-advisory","client_payload":{"url":"https://<coordinator>/.../icsa-26-307-01.json","feed":"OT"}}'
    ```
-   For `feed`, ICSA- and ICSMA- IDs are detected automatically as OT. VA- IDs need `IT` or `VA` given explicitly.
+   For `feed`, ICSA- and ICSMA- IDs are detected automatically as OT. Any other ID needs `IT` given explicitly.
 6. **First test:** in a fork, submit one known-good advisory and one broken one. The broken one must fail at the Validate step.
 
 ## Hosting

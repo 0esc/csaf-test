@@ -25,7 +25,7 @@ on:
       feed:
         description: "Feed for a URL import"
         type: choice
-        options: [auto, OT, IT, VA]
+        options: [auto, OT, IT]
         default: auto
   push:
     branches: [develop]
@@ -75,7 +75,7 @@ jobs:
           [ -n "$COORDINATOR_HOST" ] && [ "$host" = "$COORDINATOR_HOST" ] \
             || { echo "::error::Host '$host' is not COORDINATOR_HOST ('$COORDINATOR_HOST')"; exit 1; }
           FEED=$(printf '%s' "$FEED" | tr '[:lower:]' '[:upper:]')
-          case "$FEED" in IT|OT|VA) dir="incoming/$FEED";; AUTO) dir=incoming;; *) echo "::error::bad feed $FEED"; exit 1;; esac
+          case "$FEED" in IT|OT) dir="incoming/$FEED";; AUTO) dir=incoming;; *) echo "::error::bad feed $FEED"; exit 1;; esac
           mkdir -p "$dir"
           auth=(); [ -n "${COORDINATOR_TOKEN:-}" ] && auth=(-H "Authorization: Bearer $COORDINATOR_TOKEN")
           curl -fsSL --proto '=https' --max-filesize 52428800 "${auth[@]}" -o "$dir/fetched-${GITHUB_RUN_ID}.json" "$SRC_URL"
@@ -85,7 +85,7 @@ jobs:
         id: files
         run: |
           shopt -s nullglob
-          files=(incoming/*.json incoming/IT/*.json incoming/OT/*.json incoming/VA/*.json)
+          files=(incoming/*.json incoming/IT/*.json incoming/OT/*.json)
           printf '%s\n' "${files[@]}"
           echo "count=${#files[@]}" >> "$GITHUB_OUTPUT"
           [ ${#files[@]} -gt 0 ] || echo "::notice::Nothing in incoming/"
@@ -116,7 +116,7 @@ jobs:
           set -uo pipefail
           rc=0
           shopt -s nullglob
-          for f in incoming/*.json incoming/IT/*.json incoming/OT/*.json incoming/VA/*.json; do
+          for f in incoming/*.json incoming/IT/*.json incoming/OT/*.json; do
             echo "::group::Validating $f"
             "$CSAF_BIN/csaf_validator" --validator http://localhost:8082 --validator_preset mandatory -o important "$f" \
               || { echo "::error file=$f::$f failed validation (exit $?)"; rc=1; }
@@ -144,7 +144,7 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           for f in incoming/*.json;    do bash scripts/publish_csaf.sh auto "$f"; done
-          for feed in IT OT VA; do
+          for feed in IT OT; do
             for f in incoming/$feed/*.json; do bash scripts/publish_csaf.sh "$feed" "$f"; done
           done
 
