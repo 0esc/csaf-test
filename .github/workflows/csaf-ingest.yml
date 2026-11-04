@@ -38,14 +38,12 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
-  actions: write              # only used to kick off the Pages workflow
 
 env:
   BASE_BRANCH: develop
   PUBLISH_MODE: ${{ vars.CSAF_PUBLISH_MODE || 'pr' }}   # "pr" or "push"
   GOCSAF_VERSION: 3.6.0                                  # validator, pinned
   SECVISOGRAM_VERSION: 3.0.2                             # mandatory tests, pinned
-  WRITE_FEEDS: ${{ vars.CSAF_WRITE_FEEDS || 'true' }}    # set "false" after the Pages cutover
 
 jobs:
   ingest:
@@ -133,8 +131,9 @@ jobs:
         if: steps.files.outputs.count != '0'
         env:
           GPG_KEY_ID: ${{ steps.gpg.outputs.fingerprint }}
-          # Public URL of csaf_files/ used in ROLIE feed links; follows whatever repo this runs in.
-          RAW_BASE: https://raw.githubusercontent.com/${{ github.repository }}/${{ env.BASE_BRANCH }}/csaf_files
+          # Public URL of csaf_files/ used in ROLIE feed links. Defaults to this repo's raw files;
+          # set the CSAF_PUBLIC_BASE_URL variable to point the feeds at another host instead.
+          RAW_BASE: ${{ vars.CSAF_PUBLIC_BASE_URL || format('https://raw.githubusercontent.com/{0}/{1}/csaf_files', github.repository, env.BASE_BRANCH) }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -164,8 +163,6 @@ jobs:
           if [ "$PUBLISH_MODE" = "push" ]; then
             git commit -q -m "$msg" -m "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
             git push origin "HEAD:${BASE_BRANCH}"
-            # Pushes made with GITHUB_TOKEN don't trigger other workflows; start Pages explicitly.
-            if [ "${{ vars.CSAF_PAGES_ENABLED }}" = "true" ]; then gh workflow run csaf-pages.yml --ref "$BASE_BRANCH"; fi
           else
             branch="csaf/$(date -u +%Y%m%d)-${GITHUB_RUN_ID}"
             git switch -q -c "$branch"

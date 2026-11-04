@@ -13,8 +13,8 @@
 #   ALLOWED_TLP  space-separated TLP labels     (default: WHITE)
 #   GPG_KEY_ID   key/fingerprint to sign with   (default: gpg's default key)
 #   WRITE_FEEDS  "true" to update index.txt, changes.csv and the ROLIE feed
-#                (default: true). Set to "false" once GitHub Pages / csaf-action
-#                serves the provider, since it generates those itself.
+#                (default: true). Only set "false" if some other system
+#                generates those files for you.
 #
 # Produces, matching the existing files in this repo:
 #   csaf_files/<FEED>/white/<year>/<id>.json  (+ .asc, .sha512)
