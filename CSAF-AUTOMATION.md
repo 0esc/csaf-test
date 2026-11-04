@@ -27,3 +27,11 @@
 Published advisories, signatures, hashes, `index.txt`, `changes.csv` and the ROLIE feeds all live in `csaf_files/` on `develop`, and are served from `raw.githubusercontent.com`. GitHub Pages (`gh-pages` and `csaf-tools/csaf-action`) is no longer used.
 
 To serve the files from a different host, set the repository variable `CSAF_PUBLIC_BASE_URL` to the public URL of `csaf_files/` (no trailing slash). New ROLIE feed entries will use that base URL. Entries already in the feeds keep their old links until they are rewritten.
+
+<!-- >>> CHANGELOG-MD FEATURE (added 2026-11-04) >>> -->
+## Feed changelogs (CHANGELOG.md)
+Every publish adds a row to `csaf_files/<FEED>/white/CHANGELOG.md` (newest first): the advisory's `current_release_date`, a link to the file, title, version, and the summary from the matching `revision_history` entry. Re-publishing the same ID and version replaces its row instead of adding a duplicate. Unlike `changes.csv`, which keeps only the latest date per advisory, this keeps one row per version.
+
+- **Turn off:** set the repository variable `CSAF_WRITE_CHANGELOG=false`.
+- **Remove completely:** delete every block between the `CHANGELOG-MD FEATURE` markers (`grep -rn "CHANGELOG-MD FEATURE" .`) in `scripts/publish_csaf.sh`, `.github/workflows/csaf-ingest.yml` and this file, then delete `csaf_files/*/*/CHANGELOG.md`.
+<!-- <<< CHANGELOG-MD FEATURE <<< -->

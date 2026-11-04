@@ -93,6 +93,53 @@ for src in "$@"; do
   gpg "${sign_args[@]}" --output "$dest.asc" "$dest"
   gpg --batch --verify "$dest.asc" "$dest" 2>&1 | sed 's/^/  /'
 
+  # >>> CHANGELOG-MD FEATURE (added 2026-11-04) >>>
+  # Adds one row per publish to <feed>/<tlp>/CHANGELOG.md, newest first:
+  #   date (current_release_date) | advisory | title | version | change summary
+  # The summary is the revision_history entry whose number matches
+  # tracking.version (falls back to the last entry). Re-publishing the same
+  # id + version replaces its row instead of adding a second one.
+  # Turn off without deleting: WRITE_CHANGELOG=false (repo variable
+  # CSAF_WRITE_CHANGELOG). To remove the feature entirely, delete everything
+  # between the CHANGELOG-MD FEATURE markers in this file, csaf-ingest.yml and
+  # CSAF-AUTOMATION.md, then delete csaf_files/*/*/CHANGELOG.md.
+  if [ "${WRITE_CHANGELOG:-true}" = "true" ]; then
+    python3 - "$tlp_dir/CHANGELOG.md" "$src" "$rel" "$feed" "$tlp" <<'PY'
+import json, os, re, sys
+path, src, rel, feed, tlp = sys.argv[1:]
+t = json.load(open(src, encoding="utf-8"))["document"]
+tr = t["tracking"]
+hist = tr.get("revision_history", [])
+rev = next((r for r in hist if str(r.get("number")) == str(tr.get("version"))), hist[-1] if hist else {})
+cell = lambda s: re.sub(r"\s+", " ", str(s)).replace("|", "\\|").strip()
+row = "| {} | [{}]({}) | {} | {} | {} |".format(
+    cell(tr["current_release_date"][:10]), cell(tr["id"]), rel,
+    cell(t["title"]), cell(tr.get("version", "")), cell(rev.get("summary", "")))
+key = (tr["id"], str(tr.get("version", "")))
+header = [
+    f"# CISA CSAF {feed} feed changelog (TLP:{tlp})", "",
+    "Written automatically by `scripts/publish_csaf.sh` on every publish. Newest first.", "",
+    "| Date | Advisory | Title | Version | Change |",
+    "|---|---|---|---|---|",
+]
+rows = []
+if os.path.exists(path):
+    for line in open(path, encoding="utf-8").read().splitlines():
+        cols = [c.strip() for c in re.split(r"(?<!\\)\|", line)[1:-1]]
+        if len(cols) != 5 or not re.match(r"\d{4}-\d\d-\d\d$", cols[0]):
+            continue                                   # header / separator / other text
+        m = re.match(r"\[([^\]]+)\]", cols[1])
+        if (m.group(1) if m else cols[1], cols[3]) != key:
+            rows.append(line)
+rows.append(row)
+rows.sort(key=lambda r: r[2:12], reverse=True)   # stable: same day keeps order
+with open(path, "w", encoding="utf-8") as f:
+    f.write("\n".join(header + rows) + "\n")
+PY
+    echo "Updated $tlp_dir/CHANGELOG.md"
+  fi
+  # <<< CHANGELOG-MD FEATURE <<<
+
   if [ "$WRITE_FEEDS" != "true" ]; then
     echo "Published $dest (WRITE_FEEDS=false: index/changes/ROLIE left alone)"
     echo "::endgroup::"
