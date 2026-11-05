@@ -42,8 +42,6 @@ permissions:
 env:
   BASE_BRANCH: develop
   PUBLISH_MODE: ${{ vars.CSAF_PUBLISH_MODE || 'pr' }}   # "pr" or "push"
-  GOCSAF_VERSION: 3.6.0                                  # validator, pinned
-  SECVISOGRAM_VERSION: 3.0.2                             # mandatory tests, pinned
   # >>> CHANGELOG-MD FEATURE (added 2026-11-04) >>>
   # Per-feed CHANGELOG.md written by scripts/publish_csaf.sh. Set the repo
   # variable CSAF_WRITE_CHANGELOG=false to stop writing it. Delete these lines
@@ -90,40 +88,24 @@ jobs:
           echo "count=${#files[@]}" >> "$GITHUB_OUTPUT"
           [ ${#files[@]} -gt 0 ] || echo "::notice::Nothing in incoming/"
 
-      # ---- 2. Validate (schema + mandatory tests, same as csaf-action) ----
+      # ---- 2. Validate (schema + mandatory tests, offline) -----------------
       - uses: actions/setup-node@v6
         if: steps.files.outputs.count != '0'
         with:
           node-version: 22
 
-      - name: Install csaf_validator and Secvisogram validator service
+      - name: Install validator (pinned in package-lock.json)
         if: steps.files.outputs.count != '0'
-        run: |
-          set -euo pipefail
-          curl -fsSL -o /tmp/csaf.tgz "https://github.com/gocsaf/csaf/releases/download/v${GOCSAF_VERSION}/csaf-${GOCSAF_VERSION}-gnulinux-amd64.tar.gz"
-          tar -xzf /tmp/csaf.tgz -C /tmp
-          echo "CSAF_BIN=/tmp/csaf-${GOCSAF_VERSION}-gnulinux-amd64/bin-linux-amd64" >> "$GITHUB_ENV"
-          git clone -q --depth 1 -b "v${SECVISOGRAM_VERSION}" https://github.com/secvisogram/csaf-validator-service /tmp/secvisogram
-          cd /tmp/secvisogram && npm ci --silent
-          nohup npm run dev > /tmp/secvisogram.log 2>&1 &
-          for i in $(seq 1 60); do curl -fs -o /dev/null http://localhost:8082/docs && exit 0; sleep 2; done
-          cat /tmp/secvisogram.log; echo "::error::validator service did not start"; exit 1
+        run: npm ci --no-audit --no-fund
 
-# uhhhh check that this is how goCSAF works...
+      # Schema + every CSAF 2.0 mandatory test (6.1.x), in-process. Same engine
+      # as the Secvisogram validator service; no service, port or download.
+      # Anything that fails stops the run here, before the signing key is loaded.
       - name: Validate
         if: steps.files.outputs.count != '0'
         run: |
-          # csaf_validator exit codes: 0 ok, 2 schema errors, 4 no remote validator, 8 mandatory tests failed
-          set -uo pipefail
-          rc=0
           shopt -s nullglob
-          for f in incoming/*.json incoming/IT/*.json incoming/OT/*.json incoming/VA/*.json; do
-            echo "::group::Validating $f"
-            "$CSAF_BIN/csaf_validator" --validator http://localhost:8082 --validator_preset mandatory -o important "$f" \
-              || { echo "::error file=$f::$f failed validation (exit $?)"; rc=1; }
-            echo "::endgroup::"
-          done
-          exit $rc
+          node scripts/validate_csaf.mjs incoming/*.json incoming/IT/*.json incoming/OT/*.json incoming/VA/*.json
 
       # ---- 3. Sign, hash, place, index ------------------------------------
       - name: Import OpenPGP signing key
@@ -146,7 +128,7 @@ jobs:
           shopt -s nullglob
           for f in incoming/*.json;    do bash scripts/publish_csaf.sh auto "$f"; done
           for feed in IT OT VA; do
-            for f in incoming/$feed/*.json; do bash scripts/publish_csaf.sh "$feed" "$f"; done
+            for f in incoming/"$feed"/*.json; do bash scripts/publish_csaf.sh "$feed" "$f"; done
           done
 
       # ---- 4. Commit -------------------------------------------------------

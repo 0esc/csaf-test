@@ -1,0 +1,16 @@
+{
+  "name": "csaf-test",
+  "private": true,
+  "type": "module",
+  "description": "Offline CSAF 2.0 validation (schema + mandatory tests) and publish tests",
+  "scripts": {
+    "validate": "node scripts/validate_csaf.mjs",
+    "test": "bash scripts/test_publish.sh"
+  },
+  "dependencies": {
+    "@secvisogram/csaf-validator-lib": "3.0.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

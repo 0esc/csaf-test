@@ -159,9 +159,14 @@ PY
   mv "$tlp_dir/index.txt.tmp" "$tlp_dir/index.txt"
 
   # changes.csv: <path>,<current_release_date>, newest first. The OT/VA files
-  # quote both fields and the IT file doesn't, so follow whatever is there.
+  # quote both fields and the IT file doesn't, so follow whatever is there;
+  # a brand-new file gets that feed's style (IT unquoted, OT/VA quoted).
   touch "$tlp_dir/changes.csv"
-  q='"'; [ -s "$tlp_dir/changes.csv" ] && [ "$(head -c1 "$tlp_dir/changes.csv")" != '"' ] && q=''
+  if [ -s "$tlp_dir/changes.csv" ]; then
+    q='"'; [ "$(head -c1 "$tlp_dir/changes.csv")" != '"' ] && q=''
+  else
+    q='"'; [ "$feed" = "IT" ] && q=''
+  fi
   { grep -vE "^\"?${rel//./\\.}\"?," "$tlp_dir/changes.csv" || true; printf '%s%s%s,%s%s%s\n' "$q" "$rel" "$q" "$q" "$current" "$q"; } \
     | sort -t, -k2,2r -k1,1r > "$tlp_dir/changes.csv.tmp"
   mv "$tlp_dir/changes.csv.tmp" "$tlp_dir/changes.csv"

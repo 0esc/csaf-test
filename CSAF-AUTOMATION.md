@@ -3,6 +3,9 @@
 ## Files
 - `.github/workflows/csaf-ingest.yml`: replaces the SSH box. It takes the coordinator JSON, validates it, signs it, places it in `csaf_files/`, and opens a PR to `develop`.
 - `scripts/publish_csaf.sh`: does the signing, hashing and placement, and updates `index.txt`, `changes.csv` and the ROLIE feed in the repo's existing formats.
+- `scripts/validate_csaf.mjs`: validates against the CSAF 2.0 schema and every mandatory test (§6.1). It runs in-process using `@secvisogram/csaf-validator-lib`, pinned in `package-lock.json` (the same engine as the Secvisogram validator service), so it needs no service, port or download.
+- `scripts/test_publish.sh`: end-to-end tests covering IT/VA/OT placement, signatures, hashes, index, changes, ROLIE, revision bumps, and refusal of bad IDs, non-WHITE TLP and drafts. It uses a throwaway GPG key and a temp copy of the repo.
+- `.github/workflows/test.yml`: runs shellcheck, the tests and validation of anything in `incoming/` on pull requests. It uses no secrets.
 
 ## Setup
 1. **Environment:** under Settings → Environments, create `csaf-publishing` with these secrets:
@@ -21,7 +24,10 @@
      -d '{"event_type":"csaf-advisory","client_payload":{"url":"https://<coordinator>/.../icsa-26-307-01.json","feed":"OT"}}'
    ```
    For `feed`, ICSA- and ICSMA- IDs are detected automatically as OT. VA- IDs need `IT` or `VA` given explicitly.
-6. **First test:** in a fork, submit one known-good advisory and one broken one. The broken one must fail at the Validate step.
+6. **First test:** run `npm ci && npm test` locally. Then, in a fork, submit one known-good advisory and one broken one. The broken one must fail at the Validate step.
+
+## Known issues
+- `csaf_files/OT/white/2026/icsa-26-302-03.json` fails mandatory test 6.1.11. Its CWE-78 name, "...OS Command ('OS Command Injection')", is the older CWE name. The validator checks names against the current CWE catalogue, which drops the parenthetical. Advisories copied with older CWE names will be stopped at Validate until the name is updated.
 
 ## Hosting
 Published advisories, signatures, hashes, `index.txt`, `changes.csv` and the ROLIE feeds all live in `csaf_files/` on `develop`, and are served from `raw.githubusercontent.com`. GitHub Pages (`gh-pages` and `csaf-tools/csaf-action`) is no longer used.

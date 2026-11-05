@@ -1,0 +1,54 @@
+# .github/workflows/test.yml
+#
+# Runs the local test suite (scripts/test_publish.sh) whenever the publishing
+# scripts or workflows change. Uses a throwaway GPG key and a temp copy of the
+# repo: no secrets, no signing key, no coordinator, nothing published.
+# Also validates any advisory JSON a pull request adds under incoming/.
+
+name: Test CSAF tooling
+
+on:
+  pull_request:
+    paths:
+      - "scripts/**"
+      - "incoming/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/**"
+  push:
+    branches: [develop]
+    paths:
+      - "scripts/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install validator (pinned in package-lock.json)
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint shell scripts
+        run: shellcheck -S error scripts/*.sh
+
+      - name: Validate advisories waiting in incoming/
+        run: |
+          shopt -s nullglob
+          files=(incoming/*.json incoming/IT/*.json incoming/OT/*.json incoming/VA/*.json)
+          [ ${#files[@]} -eq 0 ] && { echo "Nothing in incoming/"; exit 0; }
+          node scripts/validate_csaf.mjs "${files[@]}"
+
+      - name: Run publish tests
+        run: bash scripts/test_publish.sh
