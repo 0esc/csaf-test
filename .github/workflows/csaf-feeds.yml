@@ -1,0 +1,58 @@
+# .github/workflows/csaf-feeds.yml
+#
+# Rebuilds the shared feed files from the advisories on develop:
+#   csaf_files/<FEED>/<tlp>/index.txt, changes.csv,
+#   cisa-csaf-<feed>-feed-tlp-<tlp>.json (ROLIE) and CHANGELOG.md
+#
+# This is the ONLY writer of those files. Advisory PRs carry just their own
+# .json/.asc/.sha512, so they never conflict with each other; whenever one is
+# merged, this regenerates the indexes from what is actually on develop.
+# The output depends only on the tree, so merge order doesn't matter and a
+# re-run with nothing new commits nothing.
+
+name: Rebuild CSAF feeds
+
+on:
+  push:
+    branches: [develop]
+    paths: ["csaf_files/*/*/[0-9][0-9][0-9][0-9]/**"]   # advisory files only
+  workflow_dispatch:   # also dispatched by ingest.py in push mode
+
+# One rebuild at a time. If several merges land together, GitHub may cancel a
+# *pending* rebuild in favour of a newer one; that's fine, because every
+# rebuild reads the latest develop and covers everything merged so far.
+concurrency:
+  group: csaf-feeds
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  BASE_BRANCH: develop
+
+jobs:
+  feeds:
+    runs-on: ubuntu-24.04
+    steps:
+      # Optional GitHub App token, for a develop branch that only the App may push to.
+      - name: GitHub App token
+        id: app
+        if: vars.CSAF_APP_ID != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.CSAF_APP_ID }}
+          private-key: ${{ secrets.CSAF_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.BASE_BRANCH }}
+          token: ${{ steps.app.outputs.token || github.token }}
+
+      - name: Rebuild index.txt, changes.csv, ROLIE feeds, CHANGELOG.md and push
+        env:
+          # Public URL of csaf_files/ used in ROLIE feed links. Defaults to this repo's raw files;
+          # set the CSAF_PUBLIC_BASE_URL variable to point the feeds at another host instead.
+          RAW_BASE: ${{ vars.CSAF_PUBLIC_BASE_URL || format('https://raw.githubusercontent.com/{0}/{1}/csaf_files', github.repository, env.BASE_BRANCH) }}
+          WRITE_CHANGELOG: ${{ vars.CSAF_WRITE_CHANGELOG || 'true' }}
+        run: python3 scripts/ingest.py feeds
