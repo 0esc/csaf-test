@@ -10,6 +10,8 @@ Setup, triggers and hosting: [CSAF-AUTOMATION.md](CSAF-AUTOMATION.md).
 ```
 npm ci                                              # once: installs the pinned validator
 node scripts/validate_csaf.mjs path/to/advisory.json  # schema + mandatory tests, offline
-bash scripts/test_publish.sh                        # end-to-end tests (throwaway GPG key, temp copy)
+python3 scripts/test_publish.py                     # end-to-end tests (throwaway GPG key, temp copy)
 ```
-Requires bash, jq, gpg, python3 and Node 20 or later.
+Requires Python 3.11 or later, gpg, git and Node 20 or later (openssl too, for the fetch tests).
+
+The workflows' steps live in `scripts/ingest.py`; each step in `.github/workflows/csaf-ingest.yml` is a one-line call to it.
