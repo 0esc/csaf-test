@@ -10,6 +10,6 @@ Setup, triggers and hosting: [CSAF-AUTOMATION.md](CSAF-AUTOMATION.md).
 ```
 npm ci                                              # once: installs the pinned validator
 node scripts/validate_csaf.mjs path/to/advisory.json  # schema + mandatory tests, offline
-bash scripts/test_publish.sh                        # end-to-end tests (throwaway GPG key, temp copy)
+python3 scripts/test_publish.py                     # end-to-end tests (throwaway GPG key, temp copy)
 ```
-Requires bash, jq, gpg, python3 and Node 20 or later.
+Requires Python 3.11 or later, gpg and Node 20 or later.

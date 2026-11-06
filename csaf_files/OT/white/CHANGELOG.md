@@ -1,6 +1,6 @@
 # CISA CSAF OT feed changelog (TLP:WHITE)
 
-Written automatically by `scripts/publish_csaf.sh` on every publish. Newest first.
+Written automatically by `scripts/publish_csaf.py` on every publish. Newest first.
 
 | Date | Advisory | Title | Version | Change |
 |---|---|---|---|---|

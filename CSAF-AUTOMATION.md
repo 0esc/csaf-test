@@ -2,10 +2,10 @@
 
 ## Files
 - `.github/workflows/csaf-ingest.yml`: replaces the SSH box. It takes the coordinator JSON, validates it, signs it, places it in `csaf_files/`, and opens a PR to `develop`.
-- `scripts/publish_csaf.sh`: does the signing, hashing and placement, and updates `index.txt`, `changes.csv` and the ROLIE feed in the repo's existing formats.
+- `scripts/publish_csaf.py`: does the signing, hashing and placement, and updates `index.txt`, `changes.csv` and the ROLIE feed in the repo's existing formats.
 - `scripts/validate_csaf.mjs`: validates against the CSAF 2.0 schema and every mandatory test (§6.1). It runs in-process using `@secvisogram/csaf-validator-lib`, pinned in `package-lock.json` (the same engine as the Secvisogram validator service), so it needs no service, port or download.
-- `scripts/test_publish.sh`: end-to-end tests covering IT/VA/OT placement, signatures, hashes, index, changes, ROLIE, revision bumps, and refusal of bad IDs, non-WHITE TLP and drafts. It uses a throwaway GPG key and a temp copy of the repo.
-- `.github/workflows/test.yml`: runs shellcheck, the tests and validation of anything in `incoming/` on pull requests. It uses no secrets.
+- `scripts/test_publish.py`: end-to-end tests covering IT/VA/OT placement, signatures, hashes, index, changes, ROLIE, revision bumps, and refusal of bad IDs, non-WHITE TLP and drafts. It uses a throwaway GPG key and a temp copy of the repo.
+- `.github/workflows/test.yml`: checks the Python scripts compile, runs the tests and validation of anything in `incoming/` on pull requests. It uses no secrets.
 
 ## Setup
 1. **Environment:** under Settings → Environments, create `csaf-publishing` with these secrets:
@@ -39,5 +39,5 @@ To serve the files from a different host, set the repository variable `CSAF_PUBL
 Every publish adds a row to `csaf_files/<FEED>/white/CHANGELOG.md` (newest first): the advisory's `current_release_date`, a link to the file, title, version, and the summary from the matching `revision_history` entry. Re-publishing the same ID and version replaces its row instead of adding a duplicate. Unlike `changes.csv`, which keeps only the latest date per advisory, this keeps one row per version.
 
 - **Turn off:** set the repository variable `CSAF_WRITE_CHANGELOG=false`.
-- **Remove completely:** delete every block between the `CHANGELOG-MD FEATURE` markers (`grep -rn "CHANGELOG-MD FEATURE" .`) in `scripts/publish_csaf.sh`, `.github/workflows/csaf-ingest.yml` and this file, then delete `csaf_files/*/*/CHANGELOG.md`.
+- **Remove completely:** delete every block between the `CHANGELOG-MD FEATURE` markers (`grep -rn "CHANGELOG-MD FEATURE" .`) in `scripts/publish_csaf.py`, `.github/workflows/csaf-ingest.yml` and this file, then delete `csaf_files/*/*/CHANGELOG.md`.
 <!-- <<< CHANGELOG-MD FEATURE <<< -->

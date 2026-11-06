@@ -1,6 +1,6 @@
 # .github/workflows/test.yml
 #
-# Runs the local test suite (scripts/test_publish.sh) whenever the publishing
+# Runs the local test suite (scripts/test_publish.py) whenever the publishing
 # scripts or workflows change. Uses a throwaway GPG key and a temp copy of the
 # repo: no secrets, no signing key, no coordinator, nothing published.
 # Also validates any advisory JSON a pull request adds under incoming/.
@@ -40,8 +40,8 @@ jobs:
       - name: Install validator (pinned in package-lock.json)
         run: npm ci --no-audit --no-fund
 
-      - name: Lint shell scripts
-        run: shellcheck -S error scripts/*.sh
+      - name: Check Python scripts compile
+        run: python3 -m py_compile scripts/*.py
 
       - name: Validate advisories waiting in incoming/
         run: |
@@ -51,4 +51,4 @@ jobs:
           node scripts/validate_csaf.mjs "${files[@]}"
 
       - name: Run publish tests
-        run: bash scripts/test_publish.sh
+        run: python3 scripts/test_publish.py

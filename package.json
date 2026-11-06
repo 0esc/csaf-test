@@ -5,7 +5,7 @@
   "description": "Offline CSAF 2.0 validation (schema + mandatory tests) and publish tests",
   "scripts": {
     "validate": "node scripts/validate_csaf.mjs",
-    "test": "bash scripts/test_publish.sh"
+    "test": "python3 scripts/test_publish.py"
   },
   "dependencies": {
     "@secvisogram/csaf-validator-lib": "3.0.2"
