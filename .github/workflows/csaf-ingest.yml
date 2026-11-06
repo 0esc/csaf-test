@@ -3,8 +3,13 @@
 # Each step runs one subcommand of scripts/ingest.py.
 #
 # Replaces the SSH "black box": coordinator JSON -> validate -> sign -> hash
-# -> place in csaf_files/<FEED>/white/<year>/ -> update index.txt,
-# changes.csv and the ROLIE feed -> pull request (or direct push) to develop.
+# -> place in csaf_files/<FEED>/white/<year>/ -> one pull request per
+# advisory (or a direct push) to develop.
+#
+# The shared files (index.txt, changes.csv, ROLIE feed, CHANGELOG.md) are NOT
+# touched here. csaf-feeds.yml rebuilds them after every merge, so any number
+# of advisory PRs from any number of people can be open at once and merged in
+# any order without conflicts.
 #
 # Ways an advisory gets in (all take the same path):
 #   1. repository_dispatch from the coordination platform:
@@ -33,48 +38,40 @@ on:
     branches: [develop]
     paths: ["incoming/**.json"]
 
-concurrency:
-  group: csaf-ingest          # one at a time so index/changes/ROLIE never race
-  cancel-in-progress: false
+# No workflow-wide concurrency group: GitHub keeps only ONE pending run per
+# group and cancels the rest, which would silently drop advisories when several
+# arrive together. Runs don't share files any more, so they can run in parallel.
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 env:
   BASE_BRANCH: develop
-  PUBLISH_MODE: ${{ vars.CSAF_PUBLISH_MODE || 'pr' }}   # "pr" or "push"
-  # >>> CHANGELOG-MD FEATURE (added 2026-11-04) >>>
-  # Per-feed CHANGELOG.md written by scripts/publish_csaf.py. Set the repo
-  # variable CSAF_WRITE_CHANGELOG=false to stop writing it. Delete these lines
-  # (and the marked blocks in publish_csaf.py / CSAF-AUTOMATION.md) to remove it.
-  WRITE_CHANGELOG: ${{ vars.CSAF_WRITE_CHANGELOG || 'true' }}
-  # <<< CHANGELOG-MD FEATURE <<<
 
 jobs:
-  ingest:
+  # ---- 1. Get the file(s) and validate them. No signing key in this job. -----
+  prepare:
     runs-on: ubuntu-24.04
-    environment: csaf-publishing   # holds the signing key; add reviewers here for a manual gate
+    outputs:
+      count: ${{ steps.files.outputs.count }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ env.BASE_BRANCH }}
 
-      # ---- 1. Get the file -------------------------------------------------
       - name: Fetch advisory from coordinator
         if: github.event_name != 'push' && (github.event.client_payload.url || inputs.url)
         env:
           SRC_URL: ${{ github.event.client_payload.url || inputs.url }}
           FEED: ${{ github.event.client_payload.feed || inputs.feed || 'auto' }}
           COORDINATOR_HOST: ${{ vars.COORDINATOR_HOST }}
-          COORDINATOR_TOKEN: ${{ secrets.COORDINATOR_TOKEN }}
+          COORDINATOR_TOKEN: ${{ secrets.COORDINATOR_TOKEN }}   # repository secret, not environment
         run: python3 scripts/ingest.py fetch
 
       - name: Collect incoming files
         id: files
         run: python3 scripts/ingest.py collect
 
-      # ---- 2. Validate (schema + mandatory tests, offline) -----------------
       - uses: actions/setup-node@v6
         if: steps.files.outputs.count != '0'
         with:
@@ -84,16 +81,60 @@ jobs:
         if: steps.files.outputs.count != '0'
         run: npm ci --no-audit --no-fund
 
-      # Schema + every CSAF 2.0 mandatory test (6.1.x), in-process. Same engine
-      # as the Secvisogram validator service; no service, port or download.
-      # Anything that fails stops the run here, before the signing key is loaded.
+      # Schema + every CSAF 2.0 mandatory test (6.1.x), in-process.
       - name: Validate
         if: steps.files.outputs.count != '0'
         run: python3 scripts/ingest.py validate
 
-      # ---- 3. Sign, hash, place, index ------------------------------------
-      - name: Import OpenPGP signing key
+      # Hand exactly the validated files to the signing job, so a file pushed to
+      # incoming/ in the meantime can't be signed without being validated.
+      - name: Hand validated files to the publish job
         if: steps.files.outputs.count != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: validated-incoming
+          path: incoming/   # whole folder, so incoming/<FEED>/ sub-folders survive the round trip
+          retention-days: 1
+          if-no-files-found: error
+
+  # ---- 2. Sign, hash, place, open PR(s). Only runs when there is something to
+  # publish, so reviewers on the environment are never asked to approve no-ops.
+  publish:
+    needs: prepare
+    if: needs.prepare.outputs.count != '0'
+    runs-on: ubuntu-24.04
+    environment: csaf-publishing   # holds the signing key; add reviewers here for a manual gate
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write               # push mode dispatches csaf-feeds.yml
+    env:
+      PUBLISH_MODE: ${{ vars.CSAF_PUBLISH_MODE || 'pr' }}   # "pr" or "push"
+    steps:
+      # Optional GitHub App token (see CSAF-AUTOMATION.md). Needed for PR checks to
+      # run on the bot's PRs, and for push mode on a protected develop branch.
+      - name: GitHub App token
+        id: app
+        if: vars.CSAF_APP_ID != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.CSAF_APP_ID }}
+          private-key: ${{ secrets.CSAF_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.BASE_BRANCH }}
+          token: ${{ steps.app.outputs.token || github.token }}
+
+      - name: Replace incoming/ with the validated files
+        run: find incoming -name '*.json' -type f -delete
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: validated-incoming
+          path: incoming
+
+      - name: Import OpenPGP signing key
         id: gpg
         uses: crazy-max/ghaction-import-gpg@v7
         with:
@@ -101,17 +142,11 @@ jobs:
           passphrase: ${{ secrets.CSAF_GPG_PASSPHRASE }}
 
       - name: Sign and place advisories
-        if: steps.files.outputs.count != '0'
         env:
           GPG_KEY_ID: ${{ steps.gpg.outputs.fingerprint }}
-          # Public URL of csaf_files/ used in ROLIE feed links. Defaults to this repo's raw files;
-          # set the CSAF_PUBLIC_BASE_URL variable to point the feeds at another host instead.
-          RAW_BASE: ${{ vars.CSAF_PUBLIC_BASE_URL || format('https://raw.githubusercontent.com/{0}/{1}/csaf_files', github.repository, env.BASE_BRANCH) }}
         run: python3 scripts/ingest.py publish
 
-      # ---- 4. Commit -------------------------------------------------------
-      - name: Commit and open PR / push
-        if: steps.files.outputs.count != '0'
+      - name: Open one PR per advisory / push
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
         run: python3 scripts/ingest.py commit

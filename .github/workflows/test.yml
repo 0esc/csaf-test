@@ -1,9 +1,12 @@
 # .github/workflows/test.yml
 #
-# Runs the local test suite (scripts/test_publish.py) whenever the publishing
-# scripts or workflows change. Uses a throwaway GPG key and a temp copy of the
-# repo: no secrets, no signing key, no coordinator, nothing published.
-# Also validates any advisory JSON a pull request adds under incoming/.
+# test:      runs the local test suite (scripts/test_publish.py) whenever the
+#            publishing scripts or workflows change. Uses a throwaway GPG key
+#            and a temp copy of the repo: no secrets, nothing published.
+# check-pr:  on every pull request that touches incoming/ or csaf_files/,
+#            validates the advisories it adds or changes, checks every
+#            advisory's placement and .sha512, and rejects edits to the
+#            generated feed files. Make this a required check on develop.
 
 name: Test CSAF tooling
 
@@ -12,6 +15,7 @@ on:
     paths:
       - "scripts/**"
       - "incoming/**"
+      - "csaf_files/**"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/**"
@@ -43,8 +47,25 @@ jobs:
       - name: Check Python scripts compile
         run: python3 -m py_compile scripts/*.py
 
-      - name: Validate advisories waiting in incoming/
-        run: python3 scripts/ingest.py validate
-
       - name: Run publish tests
         run: python3 scripts/test_publish.py
+
+  check-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install validator (pinned in package-lock.json)
+        run: npm ci --no-audit --no-fund
+
+      - name: Check advisories in this PR
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: python3 scripts/ingest.py check-pr
