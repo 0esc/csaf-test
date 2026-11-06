@@ -10,6 +10,7 @@ Usage:  python3 scripts/test_publish.py        (or: npm test)
 Exit:   0 if every check passes, 1 otherwise.
 """
 import copy
+import glob
 import hashlib
 import json
 import os
@@ -72,6 +73,168 @@ def save(doc, path):
 def read(path):
     with open(path, encoding="utf-8") as f:
         return f.read()
+
+
+def run_env(cmd, extra):
+    e = dict(os.environ, **extra)
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=e)
+    return p.returncode, p.stdout
+
+
+def start_https_server(work):
+    """Local HTTPS server (self-signed cert for localhost + 127.0.0.1) used to
+    test `ingest.py fetch` without touching the network. Returns (port, ca_file)
+    or None if openssl isn't installed."""
+    if shutil.which("openssl") is None:
+        return None
+    import http.server
+    import ssl
+    import threading
+    cert, key = os.path.join(work, "cert.pem"), os.path.join(work, "key.pem")
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                    "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
+                    "-keyout", key, "-out", cert], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def send(self, code, body=b"", headers=()):
+            self.send_response(code)
+            for k, v in headers:
+                self.send_header(k, v)
+            if not any(k == "Content-Length" for k, _ in headers):
+                self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            port = self.server.server_address[1]
+            auth = json.dumps({"auth": self.headers.get("Authorization")}).encode()
+            routes = {
+                "/ok.json": lambda: self.send(200, b'{"document": {}}'),
+                "/auth.json": lambda: self.send(200, auth),
+                "/notjson": lambda: self.send(200, b"<html>"),
+                "/missing": lambda: self.send(404, b"nope"),
+                "/big": lambda: self.send(200, b"", [("Content-Length", str(60 * 1024 * 1024))]),
+                "/to-http": lambda: self.send(302, headers=[("Location", f"http://localhost:{port}/ok.json")]),
+                "/to-same": lambda: self.send(302, headers=[("Location", f"https://localhost:{port}/auth.json")]),
+                "/to-other": lambda: self.send(302, headers=[("Location", f"https://127.0.0.1:{port}/auth.json")]),
+            }
+            routes.get(self.path, lambda: self.send(404))()
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(cert, key)
+    srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv.server_address[1], cert
+
+
+def test_ingest(work, F):
+    """The workflow steps in scripts/ingest.py, on a fresh copy of the repo
+    that is a git repo with a local bare remote standing in for GitHub."""
+    repo = os.path.join(work, "ingest-repo")
+    remote = os.path.join(work, "remote.git")
+    os.makedirs(repo)
+    for d in ("scripts", "csaf_files", "incoming"):
+        shutil.copytree(os.path.join(REPO, d), os.path.join(repo, d))
+    os.symlink(os.path.join(REPO, "node_modules"), os.path.join(repo, "node_modules"))
+    os.chdir(repo)
+    for f in glob.glob("incoming/**/*.json", recursive=True):   # start from an empty incoming/
+        os.remove(f)
+    quiet = dict(stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "develop", remote], **quiet)
+    for cmd in (["init", "-q", "-b", "develop"], ["config", "user.name", "t"], ["config", "user.email", "t@x.invalid"],
+                ["add", "-A"], ["commit", "-q", "-m", "base"], ["remote", "add", "origin", remote],
+                ["push", "-q", "origin", "develop"]):
+        subprocess.run(["git", *cmd], **quiet)
+    ingest = lambda cmd: [sys.executable, "scripts/ingest.py", cmd]
+
+    print("Ingest: fetch (local HTTPS server, no network)")
+    base = {"COORDINATOR_HOST": "localhost", "GITHUB_RUN_ID": "1", "FEED": "auto"}
+    for name, extra in (
+        ("http URL is refused", {"SRC_URL": "http://localhost/ok.json"}),
+        ("host other than COORDINATOR_HOST is refused", {"SRC_URL": "https://evil.example/ok.json"}),
+        ("look-alike host is refused", {"SRC_URL": "https://localhost.evil.example/ok.json"}),
+        ("unset COORDINATOR_HOST is refused", {"SRC_URL": "https://localhost/ok.json", "COORDINATOR_HOST": ""}),
+        ("unknown feed is refused", {"SRC_URL": "https://localhost/ok.json", "FEED": "XX"}),
+    ):
+        rc, out = run_env(ingest("fetch"), {**base, **extra})
+        check(name, rc != 0, out)
+
+    server = start_https_server(work)
+    if server is None:
+        print("  SKIP  download tests (openssl not installed)")
+    else:
+        port, ca = server
+        url = lambda path, host="localhost": f"https://{host}:{port}{path}"
+        net = {**base, "SSL_CERT_FILE": ca, "NO_PROXY": "*", "no_proxy": "*", "COORDINATOR_TOKEN": "s3cret"}
+        rc, out = run_env(ingest("fetch"), {**net, "SRC_URL": url("/ok.json"), "FEED": "ot", "GITHUB_RUN_ID": "7"})
+        check("downloads into incoming/OT/fetched-<run id>.json",
+              rc == 0 and os.path.isfile("incoming/OT/fetched-7.json"), out)
+        rc, out = run_env(ingest("fetch"), {**net, "SRC_URL": url("/auth.json"), "GITHUB_RUN_ID": "8"})
+        check("sends the coordinator token",
+              rc == 0 and load("incoming/fetched-8.json")["auth"] == "Bearer s3cret", out)
+        rc, out = run_env(ingest("fetch"), {**net, "SRC_URL": url("/to-same"), "GITHUB_RUN_ID": "9"})
+        check("follows https redirect on the same host, keeping the token",
+              rc == 0 and load("incoming/fetched-9.json")["auth"] == "Bearer s3cret", out)
+        rc, out = run_env(ingest("fetch"), {**net, "SRC_URL": url("/to-other"), "GITHUB_RUN_ID": "10"})
+        check("drops the token when a redirect leaves the host",
+              rc == 0 and load("incoming/fetched-10.json")["auth"] is None, out)
+        for name, path in (("redirect to http is refused", "/to-http"), ("HTTP 404 fails", "/missing"),
+                           ("file over 50 MiB is refused", "/big"), ("non-JSON download is refused", "/notjson")):
+            rc, out = run_env(ingest("fetch"), {**net, "SRC_URL": url(path)})
+            check(name, rc != 0, out)
+        for f in glob.glob("incoming/**/*.json", recursive=True):
+            os.remove(f)
+
+    print("Ingest: collect -> validate -> publish -> commit")
+    gh_out = os.path.join(work, "gh_output")
+    open(gh_out, "w").close()
+    rc, out = run_env(ingest("collect"), {"GITHUB_OUTPUT": gh_out})
+    check("collect with nothing waiting writes count=0", rc == 0 and read(gh_out) == "count=0\n", out)
+    rc, out = run_env(ingest("validate"), {})
+    check("validate with nothing waiting succeeds", rc == 0, out)
+
+    os.makedirs("incoming/IT", exist_ok=True)
+    shutil.copy(F("va.json"), "incoming/IT/va.json")
+    shutil.copy(F("icsa.json"), "incoming/icsa.json")
+    open(gh_out, "w").close()
+    rc, out = run_env(ingest("collect"), {"GITHUB_OUTPUT": gh_out})
+    check("collect lists both files and writes count=2",
+          rc == 0 and read(gh_out) == "count=2\n" and out.split() == ["incoming/icsa.json", "incoming/IT/va.json"], out)
+    rc, out = run_env(ingest("validate"), {})
+    check("validate passes good advisories", rc == 0, out)
+    shutil.copy(F("no-title.json"), "incoming/OT-bad.json")
+    rc, out = run_env(ingest("validate"), {})
+    check("validate fails if any advisory is bad", rc != 0, out)
+    os.remove("incoming/OT-bad.json")
+
+    rc, out = run_env(ingest("publish"), {"RAW_BASE": "https://example.invalid/csaf_files"})
+    check("publish places both advisories",
+          rc == 0 and os.path.isfile("csaf_files/IT/white/2026/va-26-309-91.json")
+          and os.path.isfile("csaf_files/OT/white/2026/icsa-26-309-02.json"), out)
+
+    gh = {"PUBLISH_MODE": "push", "BASE_BRANCH": "develop", "GITHUB_SERVER_URL": "https://github.example",
+          "GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "42"}
+    rc, out = run_env(ingest("commit"), gh)
+    log = subprocess.run(["git", "--git-dir", remote, "log", "-1", "--format=%s%n%b", "develop"],
+                         stdout=subprocess.PIPE, text=True).stdout
+    check("commit pushes to develop (push mode)", rc == 0 and log.startswith("Publish CSAF: "), out + log)
+    check("commit message lists both ids", "ICSA-26-309-02" in log and "VA-26-309-91" in log, log)
+    check("commit message links the run", "https://github.example/o/r/actions/runs/42" in log, log)
+    check("incoming/ is emptied", not glob.glob("incoming/**/*.json", recursive=True))
+    files = subprocess.run(["git", "--git-dir", remote, "ls-tree", "-r", "--name-only", "develop"],
+                           stdout=subprocess.PIPE, text=True).stdout.splitlines()
+    check("pushed tree has the advisory, .asc and .sha512, and no incoming JSON",
+          {"csaf_files/IT/white/2026/va-26-309-91.json", "csaf_files/IT/white/2026/va-26-309-91.json.asc",
+           "csaf_files/IT/white/2026/va-26-309-91.json.sha512"} <= set(files)
+          and not any(f.startswith("incoming/") and f.endswith(".json") for f in files))
+    rc, out = run_env(ingest("commit"), gh)
+    check("commit with nothing new says 'No changes.'", rc == 0 and "No changes." in out, out)
+    rc, out = run_env(ingest("bogus"), {})
+    check("unknown subcommand fails", rc != 0, out)
 
 
 def main():
@@ -213,6 +376,7 @@ def main():
         check("OT changes.csv newest first, quoted",
               read("csaf_files/OT/white/changes.csv").startswith('"2026/icsa-26-309-02.json",'))
 
+        test_ingest(work, F)
         os.chdir(REPO)
 
     print()

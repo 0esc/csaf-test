@@ -44,11 +44,7 @@ jobs:
         run: python3 -m py_compile scripts/*.py
 
       - name: Validate advisories waiting in incoming/
-        run: |
-          shopt -s nullglob
-          files=(incoming/*.json incoming/IT/*.json incoming/OT/*.json incoming/VA/*.json)
-          [ ${#files[@]} -eq 0 ] && { echo "Nothing in incoming/"; exit 0; }
-          node scripts/validate_csaf.mjs "${files[@]}"
+        run: python3 scripts/ingest.py validate
 
       - name: Run publish tests
         run: python3 scripts/test_publish.py

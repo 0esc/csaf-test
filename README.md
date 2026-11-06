@@ -12,4 +12,6 @@ npm ci                                              # once: installs the pinned 
 node scripts/validate_csaf.mjs path/to/advisory.json  # schema + mandatory tests, offline
 python3 scripts/test_publish.py                     # end-to-end tests (throwaway GPG key, temp copy)
 ```
-Requires Python 3.11 or later, gpg and Node 20 or later.
+Requires Python 3.11 or later, gpg, git and Node 20 or later (openssl too, for the fetch tests).
+
+The workflows' steps live in `scripts/ingest.py`; each step in `.github/workflows/csaf-ingest.yml` is a one-line call to it.
