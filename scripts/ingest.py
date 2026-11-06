@@ -415,10 +415,15 @@ def cmd_check_pr():
     entries = [line.split("\t", 1) for line in diff.splitlines() if "\t" in line]
     ok = True
     for status, path in entries:
-        if build_feeds.is_generated(path):
-            print(f"::error file={path}::{path} is generated after merge by build_feeds.py; "
-                  "drop this change from the PR")
-            ok = False
+        if not build_feeds.is_generated(path):
+            continue
+        # Deleting a feed's generated files is what build_feeds.py itself does once
+        # the folder has no advisories left, so that one change is allowed.
+        if status == "D" and not glob.glob(os.path.join(os.path.dirname(path), "*", "*.json")):
+            continue
+        print(f"::error file={path}::{path} is generated after merge by build_feeds.py; "
+              "drop this change from the PR")
+        ok = False
     advisories = [p for s, p in entries if s in ("A", "M") and p.endswith(".json")
                   and not build_feeds.is_generated(p)
                   and (p.startswith("incoming/") or p.startswith(build_feeds.CSAF_ROOT + "/"))]
