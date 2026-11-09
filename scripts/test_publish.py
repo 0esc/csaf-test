@@ -268,11 +268,15 @@ def test_scripts(work, F, raw_base):
     expect_ok("newer revision replaces it", publish("IT", F("va-v2.json")))
     expect_fail("older revision after a newer one is refused", publish("IT", F("va-same-date.json")))
     expect_fail("malformed VA id is refused", publish("IT", F("va-badid.json")))
-    expect_fail("VA id with feed=auto is refused", publish("auto", F("va-auto.json")))
+    expect_fail("unknown id with feed=auto is refused", publish("auto", F("unknown-auto.json")))
+    routed = {"CSAF_ROOT": "routing"}   # kept apart from csaf_files/, whose feed contents are asserted below
+    expect_ok("VA id with feed=auto routes to IT", publish("auto", F("va-auto.json")), routed)
+    check("... placed under IT/white", os.path.isfile("routing/IT/white/2000/va-00-000-99.json"))
     expect_fail("TLP:AMBER is refused", publish("IT", F("va-amber.json")))
     expect_fail("draft status is refused", publish("IT", F("va-draft.json")))
-    expect_ok("VA advisory publishes to VA feed", publish("VA", F("va-vafeed.json")))
-    check("VA/white file placed", os.path.isfile("csaf_files/VA/white/2000/va-00-000-03.json"))
+    expect_ok("VA id requested for the VA feed still goes to IT", publish("VA", F("va-vafeed.json")), routed)
+    check("... placed under IT/white, not VA/white", os.path.isfile("routing/IT/white/2000/va-00-000-03.json")
+          and not os.path.exists("routing/VA"))
     expect_ok("ICSA id auto-routes to OT", publish("auto", F("icsa.json")))
     expect_ok("second ICSA (later date) publishes", publish("auto", F("icsa2.json")))
     expect_ok("published file still validates", validate(adv))
@@ -284,8 +288,6 @@ def test_scripts(work, F, raw_base):
         check(f"IT/white/{f} written", os.path.isfile(f"{d}/{f}"))
     check("IT changes.csv unquoted", read(f"{d}/changes.csv") ==
           "2000/va-00-000-01.json,2026-01-03T00:00:00.000Z\n", read(f"{d}/changes.csv"))
-    check("VA changes.csv quoted", read("csaf_files/VA/white/changes.csv") ==
-          '"2000/va-00-000-03.json","2026-01-02T00:00:00.000Z"\n')
     ot = "csaf_files/OT/white"
     check("OT index.txt reverse-sorted",
           read(f"{ot}/index.txt") == "2000/icsa-00-000-02.json\n2000/icsa-00-000-01.json\n", read(f"{ot}/index.txt"))
@@ -643,6 +645,7 @@ def main():
         save(bad, F("bad-pid.json"))
         for name, change in (("va-badid.json", {"id": "VA-ABC"}), ("va-auto.json", {"id": "VA-00-000-99"}),
                              ("va-vafeed.json", {"id": "VA-00-000-03"}),
+                             ("unknown-auto.json", {"id": "TEST-00-000-99"}),
                              ("va-draft.json", {"id": "VA-00-000-06", "status": "draft"})):
             d = copy.deepcopy(va)
             d["document"]["tracking"].update(change)

@@ -9,6 +9,7 @@ conflict and can be approved and merged in any order.
 
 Usage:   python3 scripts/publish_csaf.py <FEED> advisory.json [more.json ...]
          FEED = IT | OT | VA | auto   (auto: ICSA-/ICSMA- ids -> OT)
+         VA- ids always go to IT, whatever FEED says.
 
 Environment:
   CSAF_ROOT      repo folder holding the feeds  (default: csaf_files)
@@ -124,7 +125,9 @@ def publish(src, feed_arg):
 
     # Which feed (IT/OT/VA)?
     feed = feed_arg
-    if feed == "AUTO":
+    if id_.upper().startswith("VA-"):
+        feed = "IT"
+    elif feed == "AUTO":
         if id_.upper().startswith(("ICSA-", "ICSMA-")):
             feed = "OT"
         else:
@@ -132,8 +135,7 @@ def publish(src, feed_arg):
     if feed not in FEEDS:
         die(f"unknown feed '{feed}' (expected IT, OT or VA)")
 
-    # VA ids (published in either the IT or the VA feed): VA-<digits>[-<digits>...],
-    # e.g. VA-26-302-01 -> <feed>/white/<year>/va-26-302-01.json
+    # VA ids: VA-<digits>[-<digits>...], e.g. VA-26-302-01 -> IT/white/<year>/va-26-302-01.json
     if id_.upper().startswith("VA-") and not re.fullmatch(r"VA-[0-9]+(-[0-9]+)*", id_.upper()):
         die(f"{src}: VA id '{id_}' must be 'VA-' followed by numbers separated by '-' (e.g. VA-26-302-01)")
 
