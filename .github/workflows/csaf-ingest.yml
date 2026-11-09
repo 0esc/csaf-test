@@ -17,7 +17,7 @@
 #        {"event_type":"csaf-advisory","client_payload":{"url":"https://...","feed":"OT"}}
 #   2. workflow_dispatch: someone pastes the URL in the Actions tab
 #   3. push: commit the raw JSON to incoming/<FEED>/  (incoming/OT/foo.json)
-#      or to incoming/ (feed auto-detected: ICSA-/ICSMA- -> OT)
+#      or to incoming/ (feed auto-detected: ICSA-/ICSMA- -> OT, VA- -> IT)
 
 name: Ingest CSAF advisory
 

@@ -56,7 +56,7 @@ csaf-feeds.yml ─ rebuild index.txt, changes.csv, ROLIE feed, CHANGELOG.md from
      https://api.github.com/repos/0esc/csaf-test/dispatches \
      -d '{"event_type":"csaf-advisory","client_payload":{"url":"https://<coordinator>/.../icsa-26-307-01.json","feed":"OT"}}'
    ```
-   For `feed`, ICSA- and ICSMA- IDs are detected automatically as OT. VA- IDs need `IT` or `VA` given explicitly.
+   For `feed`, ICSA- and ICSMA- IDs are detected automatically as OT. VA- IDs always go to IT, whatever feed is given.
 8. **First test:** run `npm ci && npm test` locally. Then, in a fork, submit one known-good advisory and one broken one. The broken one must fail at the Validate step.
 
 ## Notes
