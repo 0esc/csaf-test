@@ -1,0 +1,101 @@
+{
+  "document": {
+    "category": "csaf_security_advisory",
+    "csaf_version": "2.0",
+    "distribution": {
+      "tlp": {
+        "label": "WHITE",
+        "url": "https://www.first.org/tlp/"
+      }
+    },
+    "lang": "en-US",
+    "notes": [
+      {
+        "category": "summary",
+        "title": "Summary",
+        "text": "Synthetic test advisory. Not a real vulnerability."
+      }
+    ],
+    "publisher": {
+      "category": "coordinator",
+      "name": "Example Test Publisher",
+      "namespace": "https://example.invalid"
+    },
+    "references": [
+      {
+        "category": "self",
+        "summary": "Self",
+        "url": "https://example.invalid/t.json"
+      }
+    ],
+    "title": "TEST ONLY - end-to-end pipeline check (VA id routed to IT)",
+    "tracking": {
+      "current_release_date": "2026-11-10T16:30:00.000Z",
+      "id": "VA-26-314-90",
+      "initial_release_date": "2026-11-10T16:30:00.000Z",
+      "revision_history": [
+        {
+          "date": "2026-11-10T16:30:00.000Z",
+          "number": "1",
+          "summary": "Initial test publication"
+        }
+      ],
+      "status": "final",
+      "version": "1"
+    }
+  },
+  "product_tree": {
+    "branches": [
+      {
+        "category": "vendor",
+        "name": "Example Vendor",
+        "branches": [
+          {
+            "category": "product_name",
+            "name": "Example Product",
+            "branches": [
+              {
+                "category": "product_version",
+                "name": "1.0",
+                "product": {
+                  "name": "Example Vendor Example Product 1.0",
+                  "product_id": "CSAFPID-0001"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "vulnerabilities": [
+    {
+      "title": "Synthetic weakness",
+      "cwe": {
+        "id": "CWE-20",
+        "name": "Improper Input Validation"
+      },
+      "notes": [
+        {
+          "category": "summary",
+          "title": "Description",
+          "text": "Synthetic."
+        }
+      ],
+      "product_status": {
+        "known_affected": [
+          "CSAFPID-0001"
+        ]
+      },
+      "remediations": [
+        {
+          "category": "no_fix_planned",
+          "details": "Synthetic test data.",
+          "product_ids": [
+            "CSAFPID-0001"
+          ]
+        }
+      ]
+    }
+  ]
+}
