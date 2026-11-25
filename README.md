@@ -14,6 +14,7 @@ This guide covers:
 8. [Publishing an advisory: what changes each time](#8-publishing-an-advisory-what-changes-each-time)
 9. [Values to change when you copy this repo](#9-values-to-change-when-you-copy-this-repo)
 10. [Testing and troubleshooting](#10-testing-and-troubleshooting)
+11. [How it works](#11-how-it-works)
 
 ---
 
@@ -323,7 +324,7 @@ Hard-coded values to edit if you fork this or deploy it elsewhere:
 | Where | Value | Change it if… |
 |---|---|---|
 | `.github/workflows/csaf-ingest.yml`, `csaf-feeds.yml` → `env.BASE_BRANCH` | `develop` | Your publishing branch has a different name. Also update the `branches: [develop]` triggers in all three workflows. |
-| `scripts/publish_csaf.py` → `ALLOWED_TLP` | `WHITE` | You publish other TLPs. Add `ALLOWED_TLP: "WHITE GREEN"` (space-separated) to the publish step's `env:`. |
+| `scripts/publish_csaf.py` → `ALLOWED_TLP` | `WHITE` | You publish other TLPs. Add `ALLOWED_TLP: "WHITE"` (space-separated) to the publish step's `env:`. |
 | `scripts/publish_csaf.py` → feed rules | `ICSA-`/`ICSMA-` → OT, `VA-` → IT | Your id prefixes differ. |
 | `scripts/ingest.py` → `BOT_NAME`, `BOT_EMAIL` | `github-actions[bot]` | You want commits attributed to your App (Section 3.4). |
 | `CSAF_ROOT` env | `csaf_files` | You want a different top folder. |
@@ -370,3 +371,49 @@ RAW_BASE=https://example.invalid/csaf_files python3 scripts/build_feeds.py
 | PR edits `index.txt` / `changes.csv` and fails | Those are generated. Drop them from the PR. |
 
 See [CSAF-AUTOMATION.md](CSAF-AUTOMATION.md) for how concurrency, re-runs and hosting work under the hood.
+
+
+---
+
+## 11. How it works
+
+```
+coordinator / Actions tab / push to incoming/
+        │
+        ▼
+csaf-ingest.yml ─ prepare (no secrets) ─ fetch → collect → validate
+        │           publish (signing key) ─ sign → hash → place → one PR per advisory
+        ▼
+csaf/<advisory> branch ── PR to develop ── check-pr (required check) ── review ── merge
+        │
+        ▼
+csaf-feeds.yml ─ rebuild index.txt, changes.csv, ROLIE feed, CHANGELOG.md from develop → push
+```
+
+### 11.1 Several submissions at once
+
+- **One PR per advisory.** Each PR is on branch `csaf/<file name>` and holds only that advisory's `.json`, `.asc` and `.sha512` (plus removal of its `incoming/` file, if it was committed). Different advisories never touch the same file, so their PRs can be merged in any order.
+- **Feed files are generated, never edited in PRs.** `index.txt`, `changes.csv`, the ROLIE feed and `CHANGELOG.md` are rebuilt from `develop` after each merge. The result depends only on what's on `develop`, not on merge order, and a rebuild with nothing new commits nothing.
+- **One rebuild at a time** (`concurrency: csaf-feeds`). If `develop` moves before the push, it rebuilds and retries. GitHub may cancel a waiting rebuild in favour of a newer one; that's safe, because each rebuild covers everything on `develop`.
+- **Ingest runs in parallel.** There's deliberately no concurrency group: GitHub keeps only one pending run per group and cancels the rest, which would silently drop advisories that arrive together.
+- **Push mode** commits straight to `develop`, rebasing and retrying if it moved, then starts the feed rebuild.
+
+### 11.2 Re-submissions and revisions
+
+| Situation | What happens |
+|---|---|
+| New revision while its PR is open | The same branch and PR are updated. |
+| Same advisory sent again while its PR is open | Left alone: no re-signing, no new PR. |
+| Two revisions of the same advisory at the same moment | The later run's force-push wins; the PR shows the final content. |
+| Revision not newer than the copy on `develop` | Refused (see Section 8.2). |
+
+### 11.3 `incoming/`
+
+Only files directly in `incoming/` or `incoming/IT|OT|VA/` are processed, and only processed files are removed. Anything else in `incoming/` is left alone.
+
+### 11.4 Feed changelogs
+
+`csaf_files/<FEED>/white/CHANGELOG.md` has one row per revision, newest first: date, link, title, version and revision summary. (`changes.csv` keeps only the latest date per advisory.)
+
+- **Turn off:** set `CSAF_WRITE_CHANGELOG=false`. The next rebuild removes the files.
+- **Remove completely:** also delete `render_changelog` and its call in `scripts/build_feeds.py`, and the `WRITE_CHANGELOG` line in `.github/workflows/csaf-feeds.yml`.
